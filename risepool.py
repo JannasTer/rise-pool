@@ -4,7 +4,6 @@ import sys
 import time
 import argparse 
 
-
 ENABLE_VERSION_1 = True
 
 if sys.version_info[0] < 3:
@@ -65,44 +64,24 @@ def loadLog ():
 		}
 	return data
 	
-	
 def saveLog (log):
 	json.dump (log, open (LOGFILE, 'w'), indent=4, separators=(',', ': '))
 	
 def createPaymentLine (to, amount):
-	if conf['coin'].lower() != 'lisk':
-		data = { "secret": conf['secret'], "amount": int (amount * 100000000), "recipientId": to }
-		if conf['secondsecret'] != None:
-			data['secondSecret'] = conf['secondsecret']
+	data = { "secret": conf['secret'], "amount": int (amount * 100000000), "recipientId": to }
+	if conf['secondsecret'] != None:
+		data['secondSecret'] = conf['secondsecret']
 
-		nodepay = conf['nodepay']
-		if ENABLE_VERSION_1:
-			nodepay = 'http://localhost:6990'
+	nodepay = conf['nodepay']
+	if ENABLE_VERSION_1:
+		nodepay = 'http://localhost:6990'
 
-		return 'curl -k -H  "Content-Type: application/json" -X PUT -d \'' + json.dumps (data) + '\' ' + nodepay + "/api/transactions\n\nsleep 0.5\n"
-	else:
-		pline = 'lisk transaction:broadcast `lisk transaction:create --type=0 %.8f %s -p=pass:"%s"' % (amount, to, conf['secret'])
-		if conf['secondsecret'] != None:
-			pline += ' -s=pass:"%s"' % conf['secondsecret']
-		pline += '`\n'
-		return pline
+	return 'curl -k -H  "Content-Type: application/json" -X PUT -d \'' + json.dumps (data) + '\' ' + nodepay + "/api/transactions\n\nsleep 0.5\n"
 
 def estimatePayouts (log):
-	if conf['coin'].lower () == 'ark' or conf['coin'].lower () == 'kapu' :
-		uri = conf['node'] + '/api/delegates/forging/getForgedByAccount?generatorPublicKey=' + conf['pubkey']
-		d = requests.get (uri)
-		lf = log['lastforged']
-		rew = int (d.json ()['rewards']) 
-		log['lastforged'] = rew 
-		rew = rew - lf
-	elif conf['coin'].lower () == 'lisk' and ENABLE_VERSION_1:
-		uri = conf['node'] + '/api/delegates/' + conf['address'] + '/forging_statistics?&fromTimestamp=' + str (log['lastpayout']) + '000&toTimestamp=' + str (int (time.time ())) + '000'
-		d = requests.get (uri)
-		rew = d.json ()['data']['rewards']
-	else:
-		uri = conf['node'] + '/api/delegates/forging/getForgedByAccount?generatorPublicKey=' + conf['pubkey'] + '&start=' + str (log['lastpayout']) + '&end=' + str (int (time.time ()))
-		d = requests.get (uri)
-		rew = d.json ()['rewards']
+	uri = conf['node'] + '/api/delegates/forging/getForgedByAccount?generatorPublicKey=' + conf['pubkey'] + '&start=' + str (log['lastpayout']) + '&end=' + str (int (time.time ()))
+	d = requests.get (uri)
+	rew = d.json ()['rewards']
 
 	forged = (int (rew) / 100000000) * conf['percentage'] / 100
 	print ('To distribute: %f %s' % (forged, conf['coin']))
@@ -112,18 +91,7 @@ def estimatePayouts (log):
 
 	print ('Getting voters...')
 		
-	if conf['coin'].lower () == 'lisk' and ENABLE_VERSION_1:
-		votes = requests.get (conf['node'] + '/api/voters?address=' + conf['address']).json ()['data']['votes']
-		d = []
-
-		for offset in range(0,votes,100):
-			dpart = requests.get (conf['node'] + '/api/voters?address=' + conf['address'] + '&offset='+str(offset)+'&limit=100').json ()['data']['voters']
-			d += dpart
-			print ('Getting voters...', offset + 100, ' of ', votes)
-
-		d = { "accounts": d }
-	else:
-		d = requests.get (conf['node'] + '/api/delegates/voters?publicKey=' + conf['pubkey']).json ()
+	d = requests.get (conf['node'] + '/api/delegates/voters?publicKey=' + conf['pubkey']).json ()
 	
 	weight = 0.0
 	payouts = []
@@ -150,8 +118,7 @@ def estimatePayouts (log):
 		#print (float (x['balance']) / 100000000, payouts [x['address']], x['address'])
 		
 	return (payouts, log, forged)
-	
-	
+
 def pool ():
 	log = loadLog ()
 	
@@ -159,12 +126,8 @@ def pool ():
 		
 	f = open ('payments.sh', 'w')
 
-	if ENABLE_VERSION_1 and conf['coin'].lower() != 'lisk':
+	if ENABLE_VERSION_1:
 		SUFFIX = conf['coin'][0]
-		if conf['coin'] == 'OXY' or conf['coin'] == 'OXYCOIN':
-			SUFFIX = 'X'               
-		#if conf['coin'] == 'LISK':
-        #                SUFFIX = 'L'
 		
 		f.write ("echo Starting dpos-api-fallback\n")
 		f.write ("node dpos-api-fallback/dist/index.js start -n " + conf['nodepay'] + " -s " + SUFFIX + "&\n")
@@ -192,13 +155,11 @@ def pool ():
 		log['accounts'][x['address']]['received'] += (x['balance'] + pending)
 		if pending > 0:
 			log['accounts'][x['address']]['pending'] = 0
-		
 
 		f.write ('echo ['+str(i)+'/'+str(n)+'] Sending ' + str (x['balance'] - fees) + ' \(+' + str (pending) + ' pending\) to ' + x['address'] + '\n')
 		f.write (createPaymentLine (x['address'], x['balance'] + pending - fees))
 		i += 1
-
-			
+		
 	# Handle pending balances
 	for y in log['accounts']:
 		# If the pending is above the minpayout, create the payout line
@@ -208,14 +169,12 @@ def pool ():
 			
 			log['accounts'][y]['received'] += log['accounts'][y]['pending']
 			log['accounts'][y]['pending'] = 0.0
-			
-			
+		
 	# Donations
 	if 'donations' in conf:
 		for y in conf['donations']:
 			f.write ('echo Sending donation ' + str (conf['donations'][y]) + ' to ' + y + '\n')
 			f.write (createPaymentLine (y, conf['donations'][y]))
-
 
 	# Donation percentage
 	if 'donationspercentage' in conf:
@@ -225,8 +184,7 @@ def pool ():
 			f.write ('echo Sending donation ' + str (conf['donationspercentage'][y]) + '% \(' + str (am) + 'LSK\) to ' + y + '\n')	
 			f.write (createPaymentLine (y, am))
 
-	if ENABLE_VERSION_1 and conf['coin'].lower() != 'lisk':
-		f.write ("kill $DPOSFALLBACK_PID\n")
+	f.write ("kill $DPOSFALLBACK_PID\n")
 	f.close ()
 	
 	# Update last payout
@@ -242,8 +200,6 @@ def pool ():
 		yes = input ('save? y/n: ')
 		if yes == 'y':
 			saveLog (log)
-			
-			
 
 if __name__ == "__main__":
 	pool ()
